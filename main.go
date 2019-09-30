@@ -1,0 +1,81 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/PuerkitoBio/goquery"
+)
+
+// Building は建物を表す
+type Building struct {
+	Name     string   `json:"name"`
+	Age      string   `json:"age"`
+	Height   string   `json:"height"`
+	Distance []string `json:"distance"`
+	Rooms    []Room   `json:"rooms"`
+}
+
+// Room は部屋を表す
+type Room struct {
+	Price string `json:"price"`
+	Area  string `json:"area"`
+}
+
+func main() {
+	url := "https://suumo.jp/chintai/tokyo/ek_27580/"
+	doc, err := goquery.NewDocument(url)
+	if err != nil {
+		panic(err)
+	}
+
+	title := doc.Find("title").Text()
+	fmt.Println(title)
+
+	buildings := []Building{}
+	// 建物を全て取得
+	selection := doc.Find("div.cassetteitem")
+	selection.Each(func(index int, s *goquery.Selection) {
+		building := Building{}
+		name := s.Find("div.cassetteitem_content-title").Text()
+		building.Name = name
+
+		// 駅からの距離
+		col2 := s.Find("li.cassetteitem_detail-col2 > div")
+		dist := []string{}
+		col2.Each(func(_ int, sc *goquery.Selection) {
+			dist = append(dist, sc.Text())
+		})
+		building.Distance = dist
+
+		// 築年数と高さ
+		col3 := s.Find("li.cassetteitem_detail-col3 > div")
+		col3.Each(func(_ int, sc *goquery.Selection) {
+			age := sc.First().Text()
+			height := sc.Last().Text()
+			building.Age = age
+			building.Height = height
+		})
+
+		// 部屋を取得
+		rselection := s.Find("div.cassetteitem-item > table > tbody")
+		rselection.Each(func(_ int, sc *goquery.Selection) {
+			room := Room{}
+			price := sc.Find("span.cassetteitem_price--rent").Text()
+			room.Price = price
+
+			area := sc.Find("span.cassetteitem_menseki").Text()
+			room.Area = area
+
+			building.Rooms = append(building.Rooms, room)
+		})
+
+		buildings = append(buildings, building)
+	})
+
+	jsonBytes, err := json.Marshal(&buildings)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(string(jsonBytes))
+}
