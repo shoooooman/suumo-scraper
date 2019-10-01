@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"strconv"
 
 	"github.com/PuerkitoBio/goquery"
@@ -20,21 +21,37 @@ type Building struct {
 
 // Room は部屋を表す
 type Room struct {
-	Price string `json:"price"`
-	Area  string `json:"area"`
+	Price      string `json:"price"`
+	AdminPrice string `json:"admin"`
+	Area       string `json:"area"`
 }
 
 // Property は物件を表す
 // CSVとして出力するため配列を用いない
 type Property struct {
-	Name     string `csv:"name"`
-	Age      string `csv:"age"`
-	Height   string `csv:"height"`
-	Distance string `csv:"distrance"`
-	Price    string `csv:"price"`
-	Area     string `csv:"area"`
+	Name       string `csv:"name"`
+	Age        string `csv:"age"`
+	Height     string `csv:"height"`
+	Distance   string `csv:"distrance"`
+	Price      string `csv:"price"`
+	AdminPrice string `csv:"admin"`
+	Area       string `csv:"area"`
 }
 
+// Line は路線を表す
+type Line struct {
+	Name     string    `json:"name"`
+	URL      string    `json:"url"`
+	Stations []Station `json:"stations"`
+}
+
+// Station は駅を表す
+type Station struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// 1つの駅の物件のページ数を取得
 func getPages(url string) int {
 	doc, err := goquery.NewDocument(url)
 	if err != nil {
@@ -49,9 +66,48 @@ func getPages(url string) int {
 	return pages
 }
 
-func scrapePage(baseURL string, page int) ([]Building, []Property) {
+// スライスの最小値とそのインデックスを返す
+func minSlice(slice []int) (m int, index int) {
+	if len(slice) == 0 {
+		panic("slice is empty.")
+	}
+
+	for i, val := range slice {
+		if i == 0 || val < m {
+			m = val
+			index = i
+		}
+	}
+	return
+}
+
+// 複数の駅からもっとも近い駅を取得
+// "ＪＲ山手線/東京駅 歩6分"のような形式から数字を抜き出して比較
+// 同じ時間の場合はインデックスが小さい方が選ばれる
+func getMinDist(distances []string) string {
+	times := []int{}
+	for _, distance := range distances {
+		rex := regexp.MustCompile(`\d+`)
+		time, err := strconv.Atoi(rex.FindString(distance))
+		if err != nil {
+			// 駅からの距離が3つ無い場合("-"が入っている)
+		} else {
+			times = append(times, time)
+		}
+	}
+	_, minIndex := minSlice(times)
+
+	return distances[minIndex]
+}
+
+func scrapeStationPage(baseURL string, page int) ([]Building, []Property) {
 	pageStr := strconv.Itoa(page)
-	url := baseURL + "?page=" + pageStr + "&rn=0020"
+	// baseURL(stationURL)は
+	// https://suumo.jp/chintai/tokyo/ek_25620/?md=01&rn=0005&ts=1
+	// のような形式で格納されている
+	// パラメータ部分を削除しても良い
+	// url := baseURL + "?page=" + pageStr + "&rn=0020"
+	url := baseURL + "&page=" + pageStr
 
 	doc, err := goquery.NewDocument(url)
 	if err != nil {
@@ -93,11 +149,15 @@ func scrapePage(baseURL string, page int) ([]Building, []Property) {
 		rselection.Each(func(_ int, sc *goquery.Selection) {
 			room := Room{}
 			// 駅からの距離は一番上に書いてあるものを採用
-			property := Property{Name: name, Distance: dist[0], Age: age, Height: height}
+			property := Property{Name: name, Distance: getMinDist(dist), Age: age, Height: height}
 
 			price := sc.Find("span.cassetteitem_price--rent").Text()
 			room.Price = price
 			property.Price = price
+
+			admin := sc.Find("span.cassetteitem_price--administration").Text()
+			room.AdminPrice = admin
+			property.AdminPrice = admin
 
 			area := sc.Find("span.cassetteitem_menseki").Text()
 			room.Area = area
@@ -157,19 +217,103 @@ func outputCSV(properties []Property) {
 	// fmt.Println(csvStr)
 }
 
-func main() {
-	baseURL := "https://suumo.jp/chintai/tokyo/ek_27580/"
+// 特定の路線の駅のURLを取得
+func scrapeStationURL(lineURL string) []Station {
+	baseURL := "https://suumo.jp"
+	url := baseURL + lineURL
 
-	pages := getPages(baseURL)
+	doc, err := goquery.NewDocument(url)
+	if err != nil {
+		panic(err)
+	}
+
+	stations := []Station{}
+
+	items := doc.Find("tr.js-graph-data > td > a")
+	items.Each(func(_ int, s *goquery.Selection) {
+		name := s.Text()
+		link, _ := s.Attr("href")
+		station := Station{Name: name, URL: link}
+		stations = append(stations, station)
+	})
+
+	return stations
+}
+
+// 沿線のURLを路線毎に取得
+func scrapeLineURL(prefecture string) []Line {
+	ensenURL := "https://suumo.jp/chintai/" + prefecture + "/ensen/"
+
+	doc, err := goquery.NewDocument(ensenURL)
+	if err != nil {
+		panic(err)
+	}
+
+	lines := []Line{}
+
+	labels := doc.Find("ul.searchitem-list > li > label > a")
+	labels.Each(func(_ int, s *goquery.Selection) {
+		name := s.Text()
+		link, _ := s.Attr("href")
+		line := Line{Name: name, URL: link}
+		lines = append(lines, line)
+	})
+
+	for key, line := range lines {
+		lines[key].Stations = scrapeStationURL(line.URL)
+	}
+
+	// test用
+	// for i := 0; i < 2; i++ {
+	// 	line := lines[i]
+	// 	link := line.URL
+	// 	lines[i].Stations = scrapeStationURL(link)
+	// }
+
+	return lines
+}
+
+func main() {
+	lines := []Line{}
+
+	prefectures := [...]string{"tokyo", "kanagawa"}
+	for _, prefecture := range prefectures {
+		prefectureLines := scrapeLineURL(prefecture)
+		lines = append(lines, prefectureLines...)
+	}
+
+	baseURL := "https://suumo.jp"
 
 	buildings := []Building{}
 	properties := []Property{}
-	// ページ毎の情報を取得し連結
-	for i := 1; i <= pages; i++ {
-		buil, pro := scrapePage(baseURL, i)
-		buildings = append(buildings, buil...)
-		properties = append(properties, pro...)
+	for _, line := range lines {
+		for _, station := range line.Stations {
+			stationURL := baseURL + station.URL
+			pages := getPages(stationURL)
+			// ページ毎の情報を取得し連結
+			for i := 1; i <= pages; i++ {
+				buil, pro := scrapeStationPage(stationURL, i)
+				buildings = append(buildings, buil...)
+				properties = append(properties, pro...)
+			}
+		}
 	}
+
+	// test用
+	// for i := 0; i < 2; i++ {
+	// 	line := lines[i]
+	// 	for j := 0; j < 2; j++ {
+	// 		station := line.Stations[j]
+	// 		stationURL := baseURL + station.URL
+	// 		getPages(stationURL)
+	// 		// ページ毎の情報を取得し連結
+	// 		for k := 1; k <= 2; k++ {
+	// 			buil, pro := scrapeStationPage(stationURL, k)
+	// 			buildings = append(buildings, buil...)
+	// 			properties = append(properties, pro...)
+	// 		}
+	// 	}
+	// }
 
 	outputJSON(buildings)
 	outputCSV(properties)
