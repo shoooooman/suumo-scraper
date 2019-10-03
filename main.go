@@ -12,11 +12,13 @@ import (
 
 // Building は建物を表す
 type Building struct {
-	Name     string   `json:"name"`
-	Age      string   `json:"age"`
-	Height   string   `json:"height"`
-	Distance []string `json:"distance"`
-	Rooms    []Room   `json:"rooms"`
+	LineName    string   `json:"line"`
+	StationName string   `json:"station"`
+	Name        string   `json:"name"`
+	Age         string   `json:"age"`
+	Height      string   `json:"height"`
+	Distance    []string `json:"distance"`
+	Rooms       []Room   `json:"rooms"`
 }
 
 // Room は部屋を表す
@@ -29,13 +31,15 @@ type Room struct {
 // Property は物件を表す
 // CSVとして出力するため配列を用いない
 type Property struct {
-	Name       string `csv:"name"`
-	Age        string `csv:"age"`
-	Height     string `csv:"height"`
-	Distance   string `csv:"distrance"`
-	Price      string `csv:"price"`
-	AdminPrice string `csv:"admin"`
-	Area       string `csv:"area"`
+	LineName    string `csv:"line"`
+	StationName string `csv:"station"`
+	Name        string `csv:"name"`
+	Age         string `csv:"age"`
+	Height      string `csv:"height"`
+	Distance    string `csv:"distrance"`
+	Price       string `csv:"price"`
+	AdminPrice  string `csv:"admin"`
+	Area        string `csv:"area"`
 }
 
 // Line は路線を表す
@@ -100,7 +104,7 @@ func getMinDist(distances []string) string {
 	return distances[minIndex]
 }
 
-func scrapeStationPage(baseURL string, page int) ([]Building, []Property) {
+func scrapeStationPage(baseURL string, page int, lineName string, stationName string) ([]Building, []Property) {
 	pageStr := strconv.Itoa(page)
 	// baseURL(stationURL)は
 	// https://suumo.jp/chintai/tokyo/ek_25620/?md=01&rn=0005&ts=1
@@ -121,7 +125,7 @@ func scrapeStationPage(baseURL string, page int) ([]Building, []Property) {
 	// 建物を全て取得
 	selection := doc.Find("div.cassetteitem")
 	selection.Each(func(index int, s *goquery.Selection) {
-		building := Building{}
+		building := Building{LineName: lineName, StationName: stationName}
 
 		name := s.Find("div.cassetteitem_content-title").Text()
 		building.Name = name
@@ -149,7 +153,7 @@ func scrapeStationPage(baseURL string, page int) ([]Building, []Property) {
 		rselection.Each(func(_ int, sc *goquery.Selection) {
 			room := Room{}
 			// 駅からの距離は一番上に書いてあるものを採用
-			property := Property{Name: name, Distance: getMinDist(dist), Age: age, Height: height}
+			property := Property{LineName: lineName, StationName: stationName, Name: name, Distance: getMinDist(dist), Age: age, Height: height}
 
 			price := sc.Find("span.cassetteitem_price--rent").Text()
 			room.Price = price
@@ -292,9 +296,9 @@ func main() {
 			pages := getPages(stationURL)
 			// ページ毎の情報を取得し連結
 			for i := 1; i <= pages; i++ {
-				buil, pro := scrapeStationPage(stationURL, i)
-				buildings = append(buildings, buil...)
-				properties = append(properties, pro...)
+				building, property := scrapeStationPage(stationURL, i, line.Name, station.Name)
+				buildings = append(buildings, building...)
+				properties = append(properties, property...)
 			}
 		}
 	}
@@ -308,9 +312,9 @@ func main() {
 	// 		getPages(stationURL)
 	// 		// ページ毎の情報を取得し連結
 	// 		for k := 1; k <= 2; k++ {
-	// 			buil, pro := scrapeStationPage(stationURL, k)
-	// 			buildings = append(buildings, buil...)
-	// 			properties = append(properties, pro...)
+	// 			building, property := scrapeStationPage(stationURL, k, line.Name, station.Name)
+	// 			buildings = append(buildings, building...)
+	// 			properties = append(properties, property...)
 	// 		}
 	// 	}
 	// }
